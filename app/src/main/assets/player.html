@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AuthoIPTV</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:sans-serif}
+  #video{width:100%;height:100%;background:#000}
+</style>
+</head>
+<body>
+<video id="video" controls autoplay playsinline></video>
+
+<script src="https://cdn.jsdelivr.net/npm/shaka-player@4.11.2/dist/shaka-player.compiled.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+
+<script>
+const video = document.getElementById('video');
+function log(m){ console.log(m); if(window.AuthoBridge) AuthoBridge.log(String(m)); }
+
+function parseConfig(){
+  try { return JSON.parse(AuthoBridge.getStreamConfig()); }
+  catch(e){ log('config error: '+e); return null; }
+}
+
+async function playWithShaka(cfg){
+  shaka.polyfill.installAll();
+  if(!shaka.Player.isBrowserSupported()){ log('Shaka no soportado'); return; }
+  const player = new shaka.Player();
+  await player.attach(video);
+  player.addEventListener('error', e => log('shaka error: '+e.detail));
+
+  player.getNetworkingEngine().registerRequestFilter((type, request) => {
+    for(const [k,v] of Object.entries(cfg.headers || {})) request.headers[k]=v;
+  });
+
+  if(cfg.clearKey && cfg.clearKey.kid && cfg.clearKey.key){
+    player.configure({
+      drm: {
+        clearKeys: { [cfg.clearKey.kid]: cfg.clearKey.key },
+        advanced: { 'org.w3.clearkey': { 'distinctiveIdentifierRequired': false } }
+      }
+    });
+  }
+
+  try { await player.load(cfg.url); log('Shaka OK'); video.play(); }
+  catch(e){ log('load error: '+e); }
+}
+
+function playWithHls(cfg){
+  if(!Hls.isSupported()){ log('hls.js no soportado'); return; }
+  const hls = new Hls({
+    xhrSetup: (xhr) => {
+      for(const [k,v] of Object.entries(cfg.headers || {})) xhr.setRequestHeader(k, v);
+    }
+  });
+  hls.loadSource(cfg.url);
+  hls.attachMedia(video);
+  hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play(); log('hls OK'); });
+  hls.on(Hls.Events.ERROR, (_, d) => log('hls error: '+d.details));
+}
+
+(function start(){
+  const cfg = parseConfig();
+  if(!cfg || !cfg.url){ log('sin URL'); return; }
+  log('URL: '+cfg.url);
+  if(cfg.isDash) playWithShaka(cfg);
+  else playWithHls(cfg);
+})();
+</script>
+</body>
+</html>
